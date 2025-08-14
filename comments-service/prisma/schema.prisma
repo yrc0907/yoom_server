@@ -1,0 +1,19 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("COMMENTS_DATABASE_URL")
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  videoId   String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([videoId])
+}
+

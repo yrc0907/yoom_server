@@ -1,0 +1,31 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("FEED_DATABASE_URL")
+}
+
+model Publish {
+  id        String   @id @default(cuid())
+  videoKey  String   // S3 key: uploads/users/{uid}/videos/...mp4
+  authorId  String   // 发布者 userId
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  // 是否允许评论
+  allowComments Boolean @default(true)
+}
+
+model Reply {
+  id        String   @id @default(cuid())
+  publishId String
+  commentId String   // 对 comments-service 的 Comment.id 的引用（弱引用）
+  authorId  String
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([publishId])
+}
+
