@@ -83,6 +83,14 @@ app.post('/streams/:id/status', async (c) => {
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid body' }, 400);
   const updated = await prisma.liveStream.update({ where: { id }, data: parsed.data });
+  // If stream ended, cleanup ephemeral comments of this room
+  try {
+    if (parsed.data.status === 'ENDED') {
+      const COMMENTS_BASE = process.env.COMMENTS_BASE || 'http://localhost:4001';
+      await fetch(`${COMMENTS_BASE}/comments?videoId=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      // Also purge Redis hot cache list if present (handled in comments-service DELETE)
+    }
+  } catch { /* ignore cleanup errors */ }
   return c.json(updated);
 });
 
