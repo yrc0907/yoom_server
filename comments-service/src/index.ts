@@ -34,7 +34,8 @@ app.get('/comments', async (c) => {
   if (!videoId) return c.json({ error: 'videoId required' }, 400);
   const limitRaw = c.req.query('limit');
   const limit = Math.min(Math.max(Number(limitRaw || 0) || 0, 0), 1000) || 200;
-  const key = `chat:${videoId}`;
+  const scope = (c.req.query('scope') || 'live').toLowerCase(); // live|vod
+  const key = `chat:${scope}:${videoId}`;
   if (redisPublisher) {
     try {
       const arr = await redisPublisher.lrange(key, 0, limit - 1);
@@ -53,6 +54,9 @@ const createSchema = z.object({
   videoId: z.string().min(1),
   userId: z.string().min(1),
   content: z.string().min(1).max(2000),
+  replyToId: z.string().optional(),
+  replyToUserId: z.string().optional(),
+  persist: z.boolean().optional(),
 });
 const PERSIST_MODE = (process.env.COMMENTS_PERSIST || 'none').toLowerCase(); // none|sample|flagged|all
 const SAMPLE_RATE = Math.min(Math.max(Number(process.env.SAMPLE_RATE || '0') || 0, 0), 1);
@@ -61,23 +65,26 @@ app.post('/comments', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: 'invalid body', details: parsed.error.flatten() }, 400);
-  const { videoId, userId, content } = parsed.data;
+  const { videoId, userId, content, replyToId, replyToUserId } = parsed.data;
+  const scope = (c.req.query('scope') || 'live').toLowerCase();
   // Generate lightweight object first
   const now = new Date().toISOString();
-  const temp = { id: randomUUID(), videoId, userId, content, createdAt: now };
+  const temp = { id: randomUUID(), videoId, userId, content, createdAt: now, replyToId, replyToUserId } as any;
   let created = temp as any;
   // Decide persistence policy
-  const shouldPersist = PERSIST_MODE === 'all' || (PERSIST_MODE === 'sample' && Math.random() < SAMPLE_RATE);
+  const forcePersist = c.req.query('persist') === '1' || (parsed.data as any).persist === true;
+  const shouldPersist = forcePersist || PERSIST_MODE === 'all' || (PERSIST_MODE === 'sample' && Math.random() < SAMPLE_RATE);
   if (shouldPersist) {
     try { created = await prisma.comment.create({ data: { videoId, userId, content } }); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[db] persist failed:', e instanceof Error ? e.message : e); }
   }
-  // Broadcast immediately to ensure UX first
+  // Broadcast immediately to ensure UX first (room channel)
   publish(String(videoId), { type: 'comment', item: created });
+  if (replyToUserId) publish(`user:${replyToUserId}`, { type: 'reply', item: created });
   // Offload Redis cache write to next tick to avoid blocking
   if (redisPublisher) {
     setImmediate(async () => {
       try {
-        const key = `chat:${videoId}`;
+        const key = `chat:${scope}:${videoId}`;
         await redisPublisher.lpush(key, JSON.stringify(created));
         await redisPublisher.ltrim(key, 0, 499);
         await redisPublisher.expire(key, 24 * 60 * 60);
@@ -170,7 +177,8 @@ wss.on('connection', (ws: WS, req: any) => {
         if (data && data.type === 'comment' && data.videoId && data.userId && data.content) {
           const content: string = String(data.content).slice(0, 2000);
           const now = new Date().toISOString();
-          const temp = { id: randomUUID(), videoId: String(data.videoId), userId: String(data.userId), content, createdAt: now };
+          const temp = { id: randomUUID(), videoId: String(data.videoId), userId: String(data.userId), content, createdAt: now, replyToId: data.replyToId, replyToUserId: data.replyToUserId } as any;
+          const scope = (data.scope || 'live').toLowerCase();
           const save = async () => {
             if (PERSIST_MODE === 'all' || (PERSIST_MODE === 'sample' && Math.random() < SAMPLE_RATE)) {
               try { return await prisma.comment.create({ data: { videoId: String(data.videoId), userId: String(data.userId), content } }); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[db] persist failed:', e instanceof Error ? e.message : e); }
@@ -179,10 +187,11 @@ wss.on('connection', (ws: WS, req: any) => {
           };
           save().then((created) => {
             publish(String(data.videoId), { type: 'comment', item: created });
+            if (data.replyToUserId) publish(`user:${String(data.replyToUserId)}`, { type: 'reply', item: created });
             if (redisPublisher) {
               setImmediate(async () => {
                 try {
-                  const key = `chat:${created.videoId}`;
+                  const key = `chat:${scope}:${created.videoId}`;
                   await redisPublisher.lpush(key, JSON.stringify(created));
                   await redisPublisher.ltrim(key, 0, 499);
                   await redisPublisher.expire(key, 24 * 60 * 60);
