@@ -23,7 +23,8 @@
     "hono": "^4.9.0",
     "ioredis": "^5.7.0",
     "ws": "^8.18.3",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "kafkajs": "^2.2.4"
   },
   "devDependencies": {
     "@types/node": "^20.14.12",

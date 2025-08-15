@@ -26,6 +26,9 @@ importers:
       ioredis:
         specifier: ^5.7.0
         version: 5.7.0
+      kafkajs:
+        specifier: ^2.2.4
+        version: 2.2.4
       ws:
         specifier: ^8.18.3
         version: 8.18.3
@@ -578,6 +581,10 @@ packages:
 
   json-parse-better-errors@1.0.2:
     resolution: {integrity: sha512-mrqyZKfX5EhL7hvqcV6WG1yYjnjeuYDzDhhcAAUrq8Po85NBQBJP+ZDUT75qZQ98IkUoBqdkExkukOU7Ts2wrw==}
+
+  kafkajs@2.2.4:
+    resolution: {integrity: sha512-j/YeapB1vfPT2iOIUn/vxdyKEuhuY2PxMBvf5JWux6iSaukAccrMtXEY/Lb7OvavDhOWME589bpLrEdnVHjfjA==}
+    engines: {node: '>=14.0.0'}
 
   load-json-file@4.0.0:
     resolution: {integrity: sha512-Kx8hMakjX03tiGTLAIdJ+lL0htKnXjEZN6hk/tozf/WOuYGdZBJrZ+rCJRbVCugsjB3jMLn9746NsQIf5VjBMw==}
@@ -1432,6 +1439,8 @@ snapshots:
   isexe@2.0.0: {}
 
   json-parse-better-errors@1.0.2: {}
+
+  kafkajs@2.2.4: {}
 
   load-json-file@4.0.0:
     dependencies:
