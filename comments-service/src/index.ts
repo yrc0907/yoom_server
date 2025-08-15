@@ -7,6 +7,8 @@ import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { WebSocketServer } from 'ws';
 import Redis from 'ioredis';
+import { kafka, TOPIC_COMMENTS } from './kafka';
+import { Producer } from 'kafkajs';
 // Fallback type for ws when @types/ws is not installed
 type WS = any;
 
@@ -14,6 +16,7 @@ type WS = any;
 
 const prisma = new PrismaClient();
 const app = new Hono();
+const producer = kafka.producer();
 
 // CORS (simple)
 const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
@@ -75,7 +78,22 @@ app.post('/comments', async (c) => {
   const forcePersist = c.req.query('persist') === '1' || (parsed.data as any).persist === true;
   const shouldPersist = forcePersist || PERSIST_MODE === 'all' || (PERSIST_MODE === 'sample' && Math.random() < SAMPLE_RATE);
   if (shouldPersist) {
-    try { created = await prisma.comment.create({ data: { videoId, userId, content } }); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[db] persist failed:', e instanceof Error ? e.message : e); }
+    try {
+      await producer.send({
+        topic: TOPIC_COMMENTS,
+        messages: [
+          {
+            // Use videoId as key for partitioning, ensuring comments for the same video go to the same partition.
+            key: videoId,
+            // Send the full temporary object. The 'id' is crucial for idempotency in the consumer.
+            value: JSON.stringify(temp),
+          },
+        ],
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[kafka] failed to produce message:', e instanceof Error ? e.message : e);
+    }
   }
   // Broadcast immediately to ensure UX first (room channel)
   publish(String(videoId), { type: 'comment', item: created });
@@ -218,9 +236,33 @@ wss.on('connection', (ws: WS, req: any) => {
 });
 
 const port = Number(process.env.PORT || 4001);
-serve({ fetch: app.fetch, port }, () => {
+
+const startServer = async () => {
+  // Connect the producer
+  await producer.connect();
   // eslint-disable-next-line no-console
-  console.log(`comments-service listening on http://localhost:${port}, ws://localhost:${wsPort}/?roomId=...`);
+  console.log('Kafka Producer connected.');
+
+  serve({ fetch: app.fetch, port }, () => {
+    // eslint-disable-next-line no-console
+    console.log(`comments-service listening on http://localhost:${port}, ws://localhost:${wsPort}/?roomId=...`);
+  });
+
+  const gracefulShutdown = async () => {
+    // eslint-disable-next-line no-console
+    console.log('Shutting down gracefully...');
+    await producer.disconnect();
+    process.exit(0);
+  };
+
+  process.on('SIGINT', gracefulShutdown);
+  process.on('SIGTERM', gracefulShutdown);
+};
+
+startServer().catch(e => {
+  // eslint-disable-next-line no-console
+  console.error('Failed to start server:', e);
+  process.exit(1);
 });
 
 
