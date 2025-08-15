@@ -68,8 +68,16 @@ app.post('/comments', async (c) => {
   let created = temp as any;
   // Decide persistence policy
   const shouldPersist = PERSIST_MODE === 'all' || (PERSIST_MODE === 'sample' && Math.random() < SAMPLE_RATE);
-  if (shouldPersist) {
-    try { created = await prisma.comment.create({ data: { videoId, userId, content } }); } catch (e) { /* eslint-disable-next-line no-console */ console.error('[db] persist failed:', e instanceof Error ? e.message : e); }
+  if (shouldPersist && redisPublisher) {
+    try {
+      // Instead of writing to DB, push to queue for the worker
+      await redisPublisher.lpush(QUEUE_NAME, JSON.stringify({ videoId, userId, content }));
+    } catch (e) {
+      /* eslint-disable-next-line no-console */
+      console.error('[redis] queue push failed:', e instanceof Error ? e.message : e);
+      // Fallback to direct write if queue fails? Or just log and move on?
+      // For now, we log and the comment is not persisted.
+    }
   }
   // Broadcast immediately to ensure UX first
   publish(String(videoId), { type: 'comment', item: created });
@@ -94,6 +102,7 @@ app.post('/comments', async (c) => {
 const localBus = new EventEmitter();
 const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_REST_URL || '';
 const redisPublisher = REDIS_URL ? new Redis(REDIS_URL) : null;
+const QUEUE_NAME = 'comments:queue';
 
 function publish(roomId: string, payload: any) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
